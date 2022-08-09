@@ -5,7 +5,7 @@
 
 #define PIN       5 // On Trinket or Gemma, suggest changing this to 1
 
-#define NUMPIXELS 8 // Popular NeoPixel ring size
+#define NUMPIXELS 2 // Popular NeoPixel ring size
 
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
@@ -15,45 +15,42 @@ void setup() {
 //#endif
 
   pixels.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
-  Serial.begin(9600);
 }
 
+int i;
+
 void loop(){
+  Serial1.begin(9600);
 
-  Serial.println("Enter RGB delay:");
-  while (Serial.available() == 0 ){}
-  int a = Serial.parseInt();
-  Serial.println(a);
+  Serial1.println("Enter RGB delay:");
+  while (Serial1.available() == 0 ){}
+  int a = Serial1.parseInt(SKIP_ALL);
+  Serial1.println(a);
 
-  Serial.flush();
+  Serial1.println("Enter loop duration:");
+  while (Serial1.available() == 0 ){}
+  int l = Serial1.parseInt(SKIP_ALL);
+  Serial1.println(l);
 
-  Serial.println("Enter loop duration:");
-  while (Serial.available() == 0){}
-  int l = Serial.parseInt();
-  Serial.println(l);
+  for (i; i < l; i++){
+    pixels.clear(); // Set all pixel colors to 'off'
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+    pixels.setPixelColor(1, pixels.Color(0, 255, 0));
+    pixels.show();
+    delay(a);
 
-  for (int i; i < l; i++){
-      cycleLEDs(a);
-      }
-  Serial.flush();
-}  
+    pixels.clear(); // Set all pixel colors to 'off'
+    pixels.setPixelColor(0, pixels.Color(255, 0, 0));
+    pixels.setPixelColor(1, pixels.Color(255, 0, 0));
+    pixels.show();
+    delay(a);
 
-void cycleLEDs(int d){  
-  pixels.clear(); // Set all pixel colors to 'off'
-  pixels.setPixelColor(0, pixels.Color(0, 255, 0));
-  pixels.setPixelColor(7, pixels.Color(0, 255, 0));
-  pixels.show();
-  delay(d);
-
- pixels.clear(); // Set all pixel colors to 'off'
-  pixels.setPixelColor(0, pixels.Color(255, 0, 0));
-  pixels.setPixelColor(7, pixels.Color(255, 0, 0));
-  pixels.show();
-  delay(d);
-
- pixels.clear(); // Set all pixel colors to 'off'
-  pixels.setPixelColor(0, pixels.Color(0, 0, 255));
-  pixels.setPixelColor(7, pixels.Color(0, 0, 255));
-  pixels.show();
-  delay(d);
+    pixels.clear(); // Set all pixel colors to 'off'
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255));
+    pixels.setPixelColor(1, pixels.Color(0, 0, 255));
+    pixels.show();
+    delay(a);
+    }
+    i=0;
+    Serial1.end();
 }
