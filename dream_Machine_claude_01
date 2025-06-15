@@ -1,0 +1,289 @@
+//# Improved by Claude AI
+
+/*
+ * Enhanced Dream Machine - RGB LED Controller with Timer Interrupts
+ * Improved version with better code quality, interrupt-based timing,
+ * and non-blocking execution
+ */
+
+#include <Adafruit_NeoPixel.h>
+
+#ifdef __AVR__
+  #include <avr/power.h>
+  #include <avr/interrupt.h>
+#endif
+
+// Configuration constants
+#define LED_PIN         30
+#define NUM_PIXELS      2
+#define SERIAL_BAUD     9600
+#define NOISE_PIN       A0
+
+// Timing constraints (milliseconds)
+#define MIN_COLOR_DELAY 3
+#define MAX_COLOR_DELAY 50
+#define MIN_CYCLE_COUNT 200
+#define MAX_CYCLE_COUNT 1000
+
+// Color definitions
+enum ColorIndex {
+  GREEN = 0,
+  RED = 1,
+  BLUE = 2,
+  NUM_COLORS = 3
+};
+
+// State machine states
+enum MachineState {
+  STATE_FADE_IN,
+  STATE_MAIN_CYCLE,
+  STATE_FADE_OUT,
+  STATE_RESET
+};
+
+// Global variables
+Adafruit_NeoPixel pixels(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+// State management
+volatile MachineState currentState = STATE_FADE_IN;
+volatile bool updateRequired = false;
+volatile unsigned long lastUpdateTime = 0;
+
+// Pattern variables
+struct PatternData {
+  uint16_t colorDelays[NUM_COLORS];    // Individual delays for R, G, B
+  uint16_t totalCycles;                // Number of cycles to run
+  uint16_t currentCycle;               // Current cycle counter
+  uint8_t currentBrightness;           // Current brightness level
+  uint8_t currentColor;                // Current color being displayed
+  uint32_t nextUpdateTime;             // When next update should occur
+  int8_t brightnessDirection;          // +1 for fade in, -1 for fade out
+} pattern;
+
+// Color arrays for easy access
+const uint32_t colors[NUM_COLORS] = {
+  0x00FF00,  // Green
+  0xFF0000,  // Red  
+  0x0000FF   // Blue
+};
+
+/*
+ * Timer1 interrupt service routine
+ * Triggers at 1kHz for smooth timing control
+ */
+ISR(TIMER1_COMPA_vect) {
+  updateRequired = true;
+}
+
+/*
+ * Initialize Timer1 for 1ms interrupts (1kHz)
+ */
+void setupTimer1() {
+  cli(); // Disable global interrupts
+  
+  // Clear timer control registers
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+  
+  // Set compare match register for 1kHz frequency
+  // (16MHz / (64 * 1000Hz)) - 1 = 249
+  OCR1A = 249;
+  
+  // Turn on CTC mode
+  TCCR1B |= (1 << WGM12);
+  
+  // Set CS11 and CS10 bits for 64 prescaler
+  TCCR1B |= (1 << CS11) | (1 << CS10);
+  
+  // Enable timer compare interrupt
+  TIMSK1 |= (1 << OCIE1A);
+  
+  sei(); // Enable global interrupts
+}
+
+/*
+ * Generate new random pattern parameters
+ */
+void generateRandomPattern() {
+  // Use analog noise for better randomness
+  randomSeed(analogRead(NOISE_PIN));
+  
+  // Generate individual color timing
+  for (int i = 0; i < NUM_COLORS; i++) {
+    pattern.colorDelays[i] = random(MIN_COLOR_DELAY, MAX_COLOR_DELAY + 1);
+  }
+  
+  // Generate cycle count
+  pattern.totalCycles = random(MIN_CYCLE_COUNT, MAX_CYCLE_COUNT + 1);
+  
+  // Reset pattern state
+  pattern.currentCycle = 0;
+  pattern.currentColor = 0;
+  pattern.nextUpdateTime = millis();
+  
+  // Debug output
+  Serial.print(F("New pattern - R:"));
+  Serial.print(pattern.colorDelays[RED]);
+  Serial.print(F(" G:"));
+  Serial.print(pattern.colorDelays[GREEN]);
+  Serial.print(F(" B:"));
+  Serial.print(pattern.colorDelays[BLUE]);
+  Serial.print(F(" Cycles:"));
+  Serial.println(pattern.totalCycles);
+}
+
+/*
+ * Update pixel colors based on current state
+ */
+void updatePixels() {
+  pixels.clear();
+  
+  uint32_t color = colors[pattern.currentColor];
+  
+  // Apply color to all pixels
+  for (int i = 0; i < NUM_PIXELS; i++) {
+    pixels.setPixelColor(i, color);
+  }
+  
+  pixels.show();
+}
+
+/*
+ * State machine update function
+ */
+void updateStateMachine() {
+  unsigned long currentTime = millis();
+  
+  switch (currentState) {
+    case STATE_FADE_IN:
+      if (currentTime >= pattern.nextUpdateTime) {
+        // Increment brightness
+        pattern.currentBrightness++;
+        pixels.setBrightness(pattern.currentBrightness);
+        
+        // Update display
+        updatePixels();
+        
+        // Schedule next color change
+        pattern.nextUpdateTime = currentTime + pattern.colorDelays[pattern.currentColor];
+        
+        // Move to next color
+        pattern.currentColor = (pattern.currentColor + 1) % NUM_COLORS;
+        
+        // Check if fade in complete
+        if (pattern.currentBrightness >= 255) {
+          currentState = STATE_MAIN_CYCLE;
+          pixels.setBrightness(255);
+          pattern.currentCycle = 0;
+          Serial.println(F("Fade in complete"));
+        }
+      }
+      break;
+      
+    case STATE_MAIN_CYCLE:
+      if (currentTime >= pattern.nextUpdateTime) {
+        // Update display
+        updatePixels();
+        
+        // Schedule next color change
+        pattern.nextUpdateTime = currentTime + pattern.colorDelays[pattern.currentColor];
+        
+        // Move to next color
+        pattern.currentColor = (pattern.currentColor + 1) % NUM_COLORS;
+        
+        // Check if we completed a full RGB cycle
+        if (pattern.currentColor == 0) {
+          pattern.currentCycle++;
+          
+          // Check if main cycle complete
+          if (pattern.currentCycle >= pattern.totalCycles) {
+            currentState = STATE_FADE_OUT;
+            pattern.currentBrightness = 255;
+            pattern.brightnessDirection = -1;
+            Serial.println(F("Starting fade out"));
+          }
+        }
+      }
+      break;
+      
+    case STATE_FADE_OUT:
+      if (currentTime >= pattern.nextUpdateTime) {
+        // Decrement brightness
+        pattern.currentBrightness--;
+        pixels.setBrightness(pattern.currentBrightness);
+        
+        // Update display
+        updatePixels();
+        
+        // Schedule next color change
+        pattern.nextUpdateTime = currentTime + pattern.colorDelays[pattern.currentColor];
+        
+        // Move to next color
+        pattern.currentColor = (pattern.currentColor + 1) % NUM_COLORS;
+        
+        // Check if fade out complete
+        if (pattern.currentBrightness <= 0) {
+          currentState = STATE_RESET;
+          Serial.println(F("Fade out complete"));
+        }
+      }
+      break;
+      
+    case STATE_RESET:
+      // Clear display
+      pixels.clear();
+      pixels.show();
+      pixels.setBrightness(0);
+      
+      // Generate new pattern
+      generateRandomPattern();
+      
+      // Reset state
+      currentState = STATE_FADE_IN;
+      pattern.currentBrightness = 0;
+      pattern.brightnessDirection = 1;
+      
+      Serial.println(F("Pattern reset"));
+      break;
+  }
+}
+
+/*
+ * Arduino setup function
+ */
+void setup() {
+  // Initialize serial communication
+  Serial.begin(SERIAL_BAUD);
+  Serial.println(F("Dream Machine Enhanced - Starting..."));
+  
+  // Initialize NeoPixel library
+  pixels.begin();
+  pixels.clear();
+  pixels.show();
+  
+  // Initialize timer interrupt
+  setupTimer1();
+  
+  // Generate initial pattern
+  generateRandomPattern();
+  
+  Serial.println(F("Initialization complete"));
+}
+
+/*
+ * Arduino main loop
+ */
+void loop() {
+  // Check if update is required (triggered by interrupt)
+  if (updateRequired) {
+    updateRequired = false;
+    lastUpdateTime = millis();
+    
+    // Update state machine
+    updateStateMachine();
+  }
+  
+  // Add any additional non-time-critical tasks here
+  // This loop runs very efficiently due to interrupt-driven timing
+}
